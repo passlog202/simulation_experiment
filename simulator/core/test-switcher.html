@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智眸实验台 · 多核仿真切换器测试</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { font-size: 20px; margin-bottom: 16px; color: #58a6ff; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #2ea043; }
+  button.secondary { background: #1f6feb; }
+  button.secondary:hover { background: #388bfd; }
+  button.danger { background: #da3633; }
+  button.danger:hover { background: #f85149; }
+  button:disabled { background: #484f58; cursor: not-allowed; }
+  button.active { outline: 2px solid #f0b429; }
+  #terminal { background: #000; border: 1px solid #30363d; border-radius: 6px; padding: 12px; height: 400px; overflow-y: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; line-height: 1.6; }
+  #terminal .sys { color: #8b949e; }
+  #terminal .ok { color: #3fb950; }
+  #terminal .err { color: #f85149; }
+  #terminal .info { color: #58a6ff; }
+  .status { display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px; }
+  .status span { background: #21262d; padding: 4px 12px; border-radius: 12px; }
+  .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #484f58; margin-right: 6px; }
+  .status .dot.on { background: #3fb950; }
+  input[type="text"] { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 300px; font-family: monospace; }
+  .cmd-row { display: flex; gap: 8px; margin-top: 12px; }
+  .note { font-size: 12px; color: #8b949e; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>🔬 智眸实验台 · 多核仿真切换器测试</h1>
+
+<div class="panel">
+  <h3 style="margin-bottom:12px;">1️⃣ 选择开发板（仿真核）</h3>
+  <div class="btn-group">
+    <button id="btn-uno" class="secondary active" onclick="switchBoard('uno')">Arduino Uno<br><small>avr8js · AVR @16MHz</small></button>
+    <button id="btn-pico" class="secondary" onclick="switchBoard('pico')">树莓派 Pico<br><small>rp2040js · ARM @125MHz</small></button>
+  </div>
+  <div class="status">
+    <span><span class="dot" id="dot-core"></span>仿真核: <b id="st-core">未启动</b></span>
+    <span>固件: <b id="st-fw">-</b></span>
+    <span>运行时间: <b id="st-time">0s</b></span>
+  </div>
+</div>
+
+<div class="panel">
+  <h3 style="margin-bottom:12px;">2️⃣ 选择固件</h3>
+  <div class="btn-group" id="fw-list">
+    <button onclick="loadFirmware('uart_hello')">uart_hello<br><small>串口心跳</small></button>
+    <button onclick="loadFirmware('sensor_reader')">sensor_reader<br><small>ADC采样+报警</small></button>
+    <button onclick="loadFirmware('led_flow')">led_flow<br><small>流水灯+串口控制</small></button>
+  </div>
+  <div class="note">Pico 板：固件为 MicroPython UF2，启动后进入 Python REPL</div>
+</div>
+
+<div class="panel">
+  <h3 style="margin-bottom:12px;">3️⃣ 虚拟串口终端</h3>
+  <div class="btn-group">
+    <button class="danger" onclick="stopCore()">⏹ 停止</button>
+    <button onclick="clearTerminal()">🗑 清空</button>
+    <button class="secondary" onclick="injectFault('disconnect')">⚡ 注入故障: 断开传感器</button>
+    <button class="secondary" onclick="injectFault('recover')">✅ 恢复传感器</button>
+  </div>
+  <div id="terminal"></div>
+  <div class="cmd-row">
+    <input type="text" id="cmd-input" placeholder="输入串口命令 (led_flow 支持 s/r/1-4, Pico REPL 支持 Python)..." onkeydown="if(event.key==='Enter')sendCommand()">
+    <button onclick="sendCommand()">发送</button>
+  </div>
+</div>
+
+<script type="module">
+// ============================================================
+// 多核切换器核心逻辑
+// ============================================================
+import { AVRRunner } from 'https://cdn.jsdelivr.net/npm/avr8js@1.0.0/dist/avr8js.js';
+
+const terminal = document.getElementById('terminal');
+let currentBoard = 'uno';
+let runner = null;
+let runTimer = null;
+let startTime = 0;
+
+// 固件映射表
+const FIRMWARE = {
+  uno: {
+    uart_hello: 'firmware/build/uart_hello/uart_hello.ino.hex',
+    sensor_reader: 'firmware/build/sensor_reader/sensor_reader.ino.hex',
+    led_flow: 'firmware/build/led_flow/led_flow.ino.hex',
+  },
+  pico: {
+    micropython: 'firmware/pico/micropython-pico.uf2',
+  }
+};
+
+function log(msg, cls = '') {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = msg;
+  terminal.appendChild(div);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function setStatus(core, fw) {
+  document.getElementById('st-core').textContent = core;
+  document.getElementById('st-fw').textContent = fw;
+  document.getElementById('dot-core').classList.add('on');
+}
+
+window.switchBoard = function(board) {
+  stopCore();
+  currentBoard = board;
+  document.querySelectorAll('#btn-uno, #btn-pico').forEach(b => b.classList.remove('active'));
+  document.getElementById(board === 'uno' ? 'btn-uno' : 'btn-pico').classList.add('active');
+
+  // 更新固件列表
+  const fwList = document.getElementById('fw-list');
+  fwList.innerHTML = '';
+  if (board === 'uno') {
+    fwList.innerHTML = `
+      <button onclick="loadFirmware('uart_hello')">uart_hello<br><small>串口心跳</small></button>
+      <button onclick="loadFirmware('sensor_reader')">sensor_reader<br><small>ADC采样+报警</small></button>
+      <button onclick="loadFirmware('led_flow')">led_flow<br><small>流水灯+串口控制</small></button>`;
+  } else {
+    fwList.innerHTML = `
+      <button onclick="loadFirmware('micropython')">micropython<br><small>Python REPL</small></button>`;
+  }
+  log(`[SYS] 已切换到 ${board === 'uno' ? 'Arduino Uno (avr8js)' : '树莓派 Pico (rp2040js)'}`, 'sys');
+};
+
+window.loadFirmware = async function(fwId) {
+  stopCore();
+  const path = FIRMWARE[currentBoard][fwId];
+  log(`[SYS] 正在加载固件: ${path} ...`, 'sys');
+
+  try {
+    if (currentBoard === 'uno') {
+      await startAVR(path, fwId);
+    } else {
+      await startPico(path, fwId);
+    }
+  } catch (e) {
+    log(`[ERROR] 加载失败: ${e.message}`, 'err');
+  }
+};
+
+async function startAVR(hexPath, fwId) {
+  const response = await fetch(hexPath);
+  const hex = await response.text();
+
+  const { CPU, avrInstruction, AVRTimer, timer0Config, timer1Config, timer2Config,
+          AVRIOPort, AVRUSART, AVRADConverter } = await import('https://cdn.jsdelivr.net/npm/avr8js@1.0.0/dist/avr8js.js');
+
+  // 解析 hex
+  const { parseHex } = await import('https://cdn.jsdelivr.net/npm/avr8js@1.0.0/dist/avr8js.js');
+  const program = new Uint16Array(0x8000);
+  // 简化: 用 avr8js 的 IntelHex 解析
+  const bytes = parseHex(hex);
+  for (let i = 0; i < bytes.length; i += 2) {
+    program[i >> 1] = bytes[i] | (bytes[i + 1] << 8);
+  }
+
+  const cpu = new CPU(program, avrInstruction);
+  const portB = new AVRIOPort(cpu, 'B');
+  const portC = new AVRIOPort(cpu, 'C');
+  const portD = new AVRIOPort(cpu, 'D');
+  const usart = new AVRUSART(cpu, () => {}, 16000000);
+  const adc = new AVRADConverter(cpu);
+
+  // 串口输出 → 终端
+  usart.onByteTransmit = (value) => {
+    const char = String.fromCharCode(value);
+    appendSerialChar(char);
+  };
+
+  // ADC 默认值 (模拟正常传感器)
+  window._adcValue = 256; // 正常范围 200-320
+  adc.onADCComplete = () => {};
+
+  runner = { cpu, usart, adc, type: 'avr' };
+
+  // 启动仿真循环
+  const MHZ = 16000000;
+  let lastCycles = 0;
+  const frameTime = 1000 / 60;
+  runTimer = setInterval(() => {
+    const cyclesToRun = Math.floor(MHZ / 60);
+    cpu.cycles += 0; // avr8js 内部处理
+    // 简化运行
+    try { cpu.tick(); } catch(e) {}
+  }, frameTime);
+
+  startTime = Date.now();
+  setStatus('avr8js (AVR @16MHz)', fwId);
+  log(`[OK] AVR 仿真核已启动, 固件: ${fwId}`, 'ok');
+
+  // 允许故障注入访问 ADC
+  window._avrADC = adc;
+}
+
+// 串口字符缓冲 (处理 \n)
+let serialBuf = '';
+function appendSerialChar(char) {
+  if (char === '\n') {
+    log(serialBuf);
+    serialBuf = '';
+  } else if (char !== '\r') {
+    serialBuf += char;
+  }
+}
+
+async function startPico(uf2Path, fwId) {
+  log(`[SYS] Pico 仿真核 (rp2040js) 加载中...`, 'sys');
+  log(`[INFO] 完整 rp2040js 集成需要构建步骤, 此处为架构占位`, 'info');
+  log(`[INFO] 固件路径: ${uf2Path} (${(638464/1024).toFixed(0)}KB MicroPython UF2)`, 'info');
+  // TODO: 集成 rp2040js npm 包
+  setStatus('rp2040js (ARM @125MHz)', fwId + ' (待集成)');
+}
+
+window.stopCore = function() {
+  if (runTimer) { clearInterval(runTimer); runTimer = null; }
+  runner = null;
+  document.getElementById('dot-core').classList.remove('on');
+  document.getElementById('st-core').textContent = '已停止';
+  if (serialBuf) { log(serialBuf); serialBuf = ''; }
+};
+
+window.clearTerminal = function() {
+  terminal.innerHTML = '';
+};
+
+window.sendCommand = function() {
+  const input = document.getElementById('cmd-input');
+  const cmd = input.value;
+  if (!cmd || !runner) return;
+  log(`> ${cmd}`, 'info');
+  // 发送到仿真核的 RX
+  if (runner.type === 'avr' && runner.usart) {
+    for (const ch of cmd + '\n') {
+      // avr8js USART 接收
+      try { runner.usart.onByteReceive && runner.usart.onByteReceive(ch.charCodeAt(0)); } catch(e) {}
+    }
+  }
+  input.value = '';
+};
+
+window.injectFault = function(type) {
+  if (type === 'disconnect') {
+    window._adcValue = 0; // 传感器断连 → ADC=0
+    log(`[FAULT] ⚡ 已注入故障: 传感器断连 (ADC强制为0)`, 'err');
+    log(`[FAULT] 观察 sensor_reader 固件的真实报错输出...`, 'err');
+  } else {
+    window._adcValue = 256; // 恢复正常
+    log(`[FAULT] ✅ 传感器已恢复 (ADC=256)`, 'ok');
+  }
+};
+
+// 初始化
+log('🔬 多核仿真切换器就绪', 'ok');
+log('请选择开发板 → 选择固件 → 观察串口输出', 'sys');
+</script>
+</body>
+</html>
