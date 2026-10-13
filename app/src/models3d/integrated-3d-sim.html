@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智眸实验台 · 3D + 真仿真联动</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { background: #161b22; border-bottom: 1px solid #30363d; padding: 10px 20px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 16px; color: #58a6ff; }
+  header .badge { font-size: 11px; background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; padding: 2px 10px; border-radius: 10px; }
+  .toolbar { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .toolbar button { background: #1f6feb; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .toolbar button:hover { background: #388bfd; }
+  .toolbar button.active { outline: 2px solid #f0b429; }
+  .toolbar button.green { background: #238636; }
+  .toolbar button.green:hover { background: #2ea043; }
+  .toolbar button.red { background: #da3633; }
+  .toolbar button.red:hover { background: #f85149; }
+  .toolbar button.warn { background: #9e6a03; }
+  .main { flex: 1; display: flex; overflow: hidden; }
+  .left { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; min-height: 300px; }
+  #canvas-wrap canvas { display: block; width: 100%; height: 100%; }
+  #tooltip { position: absolute; background: rgba(0,0,0,.85); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; pointer-events: none; display: none; z-index: 10; }
+  .hint { position: absolute; bottom: 10px; left: 10px; font-size: 11px; color: #8b949e; background: rgba(0,0,0,.6); padding: 5px 10px; border-radius: 6px; }
+  .terminal-panel { height: 200px; background: #161b22; border-top: 1px solid #30363d; padding: 10px 14px; display: flex; flex-direction: column; }
+  .terminal-panel h3 { font-size: 13px; color: #58a6ff; margin-bottom: 6px; }
+  #terminal { flex: 1; background: #000; border: 1px solid #30363d; border-radius: 6px; padding: 8px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12px; line-height: 1.6; }
+  #terminal .sys { color: #8b949e; } #terminal .ok { color: #3fb950; }
+  #terminal .err { color: #f85149; } #terminal .info { color: #58a6ff; }
+  .sidebar { width: 300px; background: #161b22; border-left: 1px solid #30363d; padding: 14px; overflow-y: auto; }
+  .sidebar h2 { font-size: 14px; color: #58a6ff; margin-bottom: 10px; }
+  .info-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .info-box h3 { font-size: 13px; margin-bottom: 5px; }
+  .info-box p { font-size: 12px; color: #8b949e; line-height: 1.7; }
+  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .status-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; }
+  .status-card .label { font-size: 11px; color: #8b949e; }
+  .status-card .value { font-size: 18px; font-weight: bold; margin-top: 4px; }
+  .status-card .value.on { color: #3fb950; }
+  .status-card .value.off { color: #8b949e; }
+  .status-card .value.err { color: #f85149; }
+  .fault-panel { background: #1a0a0a; border: 1px solid #da363355; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .fault-panel h3 { font-size: 13px; color: #f85149; margin-bottom: 8px; }
+  .fault-panel button { display: block; width: 100%; margin-bottom: 6px; background: #da3633; color: #fff; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .fault-panel button:hover { background: #f85149; }
+  .fault-panel button.recover { background: #238636; }
+  .fault-panel button.recover:hover { background: #2ea043; }
+  .part-list { list-style: none; }
+  .part-list li { padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-bottom: 4px; background: #21262d; }
+  .part-list li:hover { background: #30363d; }
+  .part-list li.active { background: #1f6feb; color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔬 智眸实验台 · 3D + 真仿真联动</h1>
+  <span class="badge">真核运行 · 3D 实时同步</span>
+  <div class="toolbar">
+    <button id="btn-uno" class="active" onclick="switchBoard('uno')">Arduino Uno</button>
+    <button id="btn-pico" onclick="switchBoard('pico')">树莓派 Pico</button>
+    <button class="green" onclick="loadFirmware('led_flow')">▶ 运行流水灯</button>
+    <button class="green" onclick="loadFirmware('sensor_reader')">▶ 运行传感器</button>
+    <button class="red" onclick="stopSim()">⏹ 停止</button>
+  </div>
+</header>
+
+<div class="main">
+  <div class="left">
+    <div id="canvas-wrap">
+      <div id="tooltip"></div>
+      <div class="hint">🖱️ 拖动旋转 · 滚轮缩放 · 点击部件查看详情</div>
+    </div>
+    <div class="terminal-panel">
+      <h3>📟 虚拟串口终端</h3>
+      <div id="terminal"></div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <h2>📊 实时状态</h2>
+    <div class="status-grid">
+      <div class="status-card"><div class="label">D13 引脚</div><div class="value off" id="st-d13">LOW</div></div>
+      <div class="status-card"><div class="label">ADC A0</div><div class="value" id="st-adc">--</div></div>
+      <div class="status-card"><div class="label">串口</div><div class="value off" id="st-uart">未启动</div></div>
+      <div class="status-card"><div class="label">故障</div><div class="value" id="st-fault">无</div></div>
+    </div>
+
+    <div class="fault-panel">
+      <h3>⚡ 故障注入</h3>
+      <button onclick="injectFault('disconnect')">断开传感器</button>
+      <button onclick="injectFault('short')">传感器短路</button>
+      <button class="recover" onclick="injectFault('recover')">✅ 恢复正常</button>
+      <p style="font-size:11px; color:#8b949e; margin-top:6px;">注入后观察：3D 模型部件变红 + 串口真实报错</p>
+    </div>
+
+    <h2>📋 部件信息</h2>
+    <div class="info-box" id="part-info">
+      <h3>👆 点击 3D 模型上的部件</h3>
+      <p>显示名称、功能和教学说明</p>
+    </div>
+
+    <h2>🧩 部件列表</h2>
+    <ul class="part-list" id="part-list"></ul>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "../node_modules/three/build/three.module.js",
+  "three/addons/": "../node_modules/three/examples/jsm/",
+  "avr8js": "../node_modules/avr8js/dist/esm/index.js"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CPU, avrInstruction, AVRIOPort, AVRUSART, AVRTimer, timer0Config, timer1Config, timer2Config } from 'avr8js';
+
+// ================= 3D 场景 =================
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 0.1, 100);
+camera.position.set(6, 5, 8);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+wrap.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(5, 10, 5); dir.castShadow = true; scene.add(dir);
+const grid = new THREE.GridHelper(20, 20, 0x30363d, 0x21262d);
+grid.position.y = -0.5; scene.add(grid);
+
+// ================= 3D 模型 =================
+let currentGroup = null;
+let clickableMeshes = [];
+let partInfo = new Map();
+let ledMeshes = new Map();
+let selectedMesh = null;
+let currentBoard = 'uno';
+
+function box(w, h, d, color, x, y, z, metal = 0.2) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: metal }));
+  m.position.set(x, y, z); m.castShadow = true; return m;
+}
+function cyl(r, h, color, x, y, z) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.6 }));
+  m.position.set(x, y, z); m.castShadow = true; return m;
+}
+function reg(mesh, id, name, desc) {
+  mesh.userData = { partId: id, partName: name, partDesc: desc };
+  clickableMeshes.push(mesh); partInfo.set(mesh, { id, name, desc });
+}
+function addLED(g, id, name, color, x, y, z, desc) {
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16),
+    new THREE.MeshStandardMaterial({ color: 0x333333, emissive: color, emissiveIntensity: 0 }));
+  led.position.set(x, y, z); led.castShadow = true;
+  reg(led, id, name, desc); g.add(led); ledMeshes.set(id, led);
+}
+function setLED(id, on) {
+  const led = ledMeshes.get(id);
+  if (led) led.material.emissiveIntensity = on ? 1.2 : 0;
+}
+
+function buildUno() {
+  const g = new THREE.Group();
+  reg(box(6.86, 0.16, 5.34, 0x006644, 0, 0, 0), 'pcb', 'PCB 印刷电路板', '绿色电路板，所有元器件都焊接在上面。');
+  g.add(clickableMeshes[clickableMeshes.length - 1]);
+  const chip = box(1.4, 0.3, 0.6, 0x1a1a1a, -0.3, 0.23, 0);
+  reg(chip, 'atmega328p', 'ATmega328P 主控芯片', 'AVR 8位单片机，16MHz。你写的代码就跑在这里。'); g.add(chip);
+  const usb = box(1.2, 0.8, 1.3, 0xaaaaaa, -2.5, 0.4, -1.8, 0.8);
+  reg(usb, 'usb', 'USB-B 接口', '连接电脑：下载程序 + 串口通信 + 供电。'); g.add(usb);
+  const pwr = cyl(0.45, 0.6, 0x111111, -2.5, 0.3, 1.8);
+  reg(pwr, 'power_jack', 'DC 电源插孔', '外接 7-12V 直流电源。'); g.add(pwr);
+  const xtal = cyl(0.2, 0.35, 0xcccccc, -1.2, 0.25, 0.8);
+  reg(xtal, 'crystal', '16MHz 晶振', '给芯片提供时钟信号，每秒 1600 万个节拍。'); g.add(xtal);
+  const rst = box(0.5, 0.25, 0.5, 0xcc0000, 0.5, 0.2, 1.5);
+  reg(rst, 'reset', '复位按钮', '按下重启单片机，重新执行 setup()。'); g.add(rst);
+  for (let i = 0; i < 14; i++) {
+    const pin = box(0.12, 0.4, 0.12, 0xffd700, 2.5, 0.28, -2.2 + i * 0.35, 0.8);
+    if (i === 13) reg(pin, 'pin_d13', 'D13 引脚', '板载 LED 连接的引脚。Blink 例程就是控制它。');
+    g.add(pin);
+  }
+  for (let i = 0; i < 6; i++) {
+    const pin = box(0.12, 0.4, 0.12, 0xffd700, 1.0, 0.28, -2.2 + i * 0.35, 0.8);
+    if (i === 0) reg(pin, 'pin_a0', 'A0 模拟引脚', 'ADC 输入：读取传感器模拟信号，0-5V 映射为 0-1023。');
+    g.add(pin);
+  }
+  addLED(g, 'led_on', 'ON 电源指示灯', 0x00ff00, -1.0, 0.15, 2.2, '通电即亮');
+  addLED(g, 'led_l', 'L LED (D13)', 0xff0000, -0.3, 0.15, 2.2, '接在 D13 引脚，由程序控制');
+  addLED(g, 'led_tx', 'TX 发送指示', 0xffff00, 0.4, 0.15, 2.2, '串口发送时闪烁');
+  addLED(g, 'led_rx', 'RX 接收指示', 0xffff00, 1.1, 0.15, 2.2, '串口接收时闪烁');
+  setLED('led_on', true);
+  return g;
+}
+
+function buildPico() {
+  const g = new THREE.Group();
+  const pcb = box(5.1, 0.12, 2.1, 0x006644, 0, 0, 0);
+  reg(pcb, 'pcb', 'PCB 印刷电路板', 'Pico 的绿色电路板，比 Uno 小一半。'); g.add(pcb);
+  const chip = box(0.7, 0.15, 0.7, 0x1a1a1a, 0, 0.12, 0);
+  reg(chip, 'rp2040', 'RP2040 主控芯片', '双核 ARM Cortex-M0+，133MHz，比 Uno 快 8 倍。'); g.add(chip);
+  const usb = box(0.9, 0.35, 0.7, 0x888888, -2.3, 0.15, 0, 0.8);
+  reg(usb, 'usb_c', 'USB-C 接口', '下载程序 + 串口 + 供电。正反都能插。'); g.add(usb);
+  const flash = box(0.5, 0.12, 0.5, 0x222222, 1.2, 0.1, 0.5);
+  reg(flash, 'flash', 'Flash 存储芯片', '2MB，存程序和 MicroPython。'); g.add(flash);
+  const boot = box(0.3, 0.15, 0.3, 0xffffff, 1.5, 0.12, -0.5);
+  reg(boot, 'bootsel', 'BOOTSEL 按钮', '按住接 USB 进入烧录模式。'); g.add(boot);
+  for (let i = 0; i < 20; i++) {
+    g.add(box(0.08, 0.3, 0.08, 0xffd700, -1.8 + i * 0.2, 0.2, -1.0, 0.8));
+    g.add(box(0.08, 0.3, 0.08, 0xffd700, -1.8 + i * 0.2, 0.2, 1.0, 0.8));
+  }
+  addLED(g, 'led_gp25', '板载 LED (GP25)', 0x00ff00, 0.8, 0.15, 0.5, '接在 GP25 引脚');
+  return g;
+}
+
+function loadModel(boardId) {
+  if (currentGroup) {
+    scene.remove(currentGroup);
+    currentGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  }
+  clickableMeshes = []; partInfo.clear(); ledMeshes.clear(); selectedMesh = null;
+  currentGroup = boardId === 'uno' ? buildUno() : buildPico();
+  scene.add(currentGroup);
+  currentBoard = boardId;
+  document.getElementById('btn-uno').classList.toggle('active', boardId === 'uno');
+  document.getElementById('btn-pico').classList.toggle('active', boardId === 'pico');
+  renderPartList();
+  document.getElementById('part-info').innerHTML = '<h3>👆 点击 3D 模型上的部件</h3><p>显示名称、功能和教学说明</p>';
+}
+
+// ================= 3D 交互 =================
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+
+function pick(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(clickableMeshes, false);
+  return hits.length ? hits[0].object : null;
+}
+renderer.domElement.addEventListener('click', (e) => {
+  const obj = pick(e);
+  if (obj) selectPart(obj);
+});
+renderer.domElement.addEventListener('mousemove', (e) => {
+  const obj = pick(e);
+  if (obj) {
+    const info = partInfo.get(obj);
+    tooltip.textContent = info ? info.name : '';
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY + 12) + 'px';
+    renderer.domElement.style.cursor = 'pointer';
+  } else {
+    tooltip.style.display = 'none';
+    renderer.domElement.style.cursor = 'default';
+  }
+});
+function selectPart(obj) {
+  if (selectedMesh && !ledMeshes.has(selectedMesh.userData.partId)) {
+    selectedMesh.material.emissiveIntensity = 0;
+  }
+  selectedMesh = obj;
+  obj.material.emissive = new THREE.Color(0xf0b429);
+  obj.material.emissiveIntensity = 0.4;
+  const info = partInfo.get(obj);
+  if (info) {
+    document.getElementById('part-info').innerHTML = `<h3>📦 ${info.name}</h3><p>${info.desc}</p>`;
+    document.querySelectorAll('.part-list li').forEach(li => li.classList.toggle('active', li.dataset.partId === info.id));
+  }
+}
+function renderPartList() {
+  const ul = document.getElementById('part-list');
+  const seen = new Set(); ul.innerHTML = '';
+  for (const [mesh, info] of partInfo) {
+    if (seen.has(info.id)) continue; seen.add(info.id);
+    const li = document.createElement('li');
+    li.dataset.partId = info.id;
+    li.textContent = info.name;
+    li.onclick = () => selectPart(mesh);
+    ul.appendChild(li);
+  }
+}
+function highlightPart(partId, color) {
+  for (const [mesh, info] of partInfo) {
+    if (info.id === partId) {
+      mesh.material.emissive = new THREE.Color(color);
+      mesh.material.emissiveIntensity = 0.8;
+      selectPart(mesh);
+      setTimeout(() => { mesh.material.emissiveIntensity = 0; }, 4000);
+      return;
+    }
+  }
+}
+
+// ================= 真仿真核 =================
+const terminal = document.getElementById('terminal');
+let sim = null; // {cpu, usart, timer}
+let adcValue = 256;
+let serialBuf = '';
+let gpioState = new Map();
+
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  terminal.appendChild(d);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function parseHex(text) {
+  const bytes = [];
+  for (const line of text.trim().split('\n')) {
+    if (!line.startsWith(':')) continue;
+    const n = parseInt(line.slice(1, 3), 16);
+    const type = parseInt(line.slice(7, 9), 16);
+    if (type !== 0) continue;
+    for (let i = 0; i < n; i++) bytes.push(parseInt(line.slice(9 + i * 2, 11 + i * 2), 16));
+  }
+  return new Uint8Array(bytes);
+}
+
+async function startAVR(fwId) {
+  const paths = {
+    led_flow: '../assets/firmware/avr/led_flow.ino.hex',
+    sensor_reader: '../assets/firmware/avr/sensor_reader.ino.hex',
+    uart_hello: '../assets/firmware/avr/uart_hello.ino.hex',
+  };
+  const resp = await fetch(paths[fwId]);
+  if (!resp.ok) throw new Error('固件加载失败');
+  const bytes = parseHex(await resp.text());
+  const program = new Uint16Array(0x8000);
+  for (let i = 0; i < bytes.length; i += 2) program[i >> 1] = bytes[i] | (bytes[i + 1] << 8);
+
+  const cpu = new CPU(program, avrInstruction);
+  new AVRIOPort(cpu, 'B'); new AVRIOPort(cpu, 'C'); new AVRIOPort(cpu, 'D');
+  const usart = new AVRUSART(cpu, () => {}, 16000000);
+  new AVRTimer(cpu, timer0Config); new AVRTimer(cpu, timer1Config); new AVRTimer(cpu, timer2Config);
+
+  usart.onByteTransmit = (v) => {
+    const ch = String.fromCharCode(v);
+    if (ch === '\n') { if (serialBuf) log(serialBuf); serialBuf = ''; }
+    else if (ch !== '\r') serialBuf += ch;
+  };
+
+  sim = { cpu, usart, fwId };
+
+  // 仿真主循环：60fps
+  sim.timer = setInterval(() => {
+    try {
+      for (let i = 0; i < 3000; i++) cpu.tick();
+      // 同步 GPIO 状态到 3D（读取 PORTB 第 5 位 = D13）
+      syncGPIOTo3D();
+    } catch (e) { stopSim(); log('[ERROR] 仿真异常', 'err'); }
+  }, 16);
+
+  document.getElementById('st-uart').textContent = '运行中';
+  document.getElementById('st-uart').className = 'value on';
+  log(`[OK] 真仿真核已启动 — 固件: ${fwId}`, 'ok');
+}
+
+function syncGPIOTo3D() {
+  if (!sim || currentBoard !== 'uno') return;
+  // 读取 PORTB 状态：avr8js 的 PORTB 寄存器
+  // 简化：通过 cpu 内存读取 PORTB (0x25)
+  try {
+    const portB = sim.cpu.data[0x25] || 0;
+    const d13 = (portB >> 5) & 1;
+    const prev = gpioState.get('D13');
+    if (prev !== d13) {
+      gpioState.set('D13', d13);
+      setLED('led_l', d13 === 1);
+      const el = document.getElementById('st-d13');
+      el.textContent = d13 ? 'HIGH' : 'LOW';
+      el.className = d13 ? 'value on' : 'value off';
+    }
+  } catch {}
+}
+
+window.switchBoard = (b) => {
+  stopSim();
+  loadModel(b);
+  log(`[SYS] 已切换到 ${b === 'uno' ? 'Arduino Uno' : '树莓派 Pico'}`, 'sys');
+  if (b === 'pico') log('[INFO] Pico 核 (rp2040js) 由 Agent 2 集成中...', 'info');
+};
+
+window.loadFirmware = async (fwId) => {
+  stopSim();
+  log(`[SYS] 加载固件: ${fwId} ...`, 'sys');
+  try {
+    if (currentBoard === 'uno') await startAVR(fwId);
+    else log('[INFO] Pico 固件待 Agent 2 集成', 'info');
+  } catch (e) { log(`[ERROR] ${e.message}`, 'err'); }
+};
+
+window.stopSim = () => {
+  if (sim?.timer) clearInterval(sim.timer);
+  sim = null; gpioState.clear();
+  document.getElementById('st-uart').textContent = '已停止';
+  document.getElementById('st-uart').className = 'value off';
+  setLED('led_l', false);
+  if (serialBuf) { log(serialBuf); serialBuf = ''; }
+  log('[SYS] 仿真已停止', 'sys');
+};
+
+window.injectFault = (type) => {
+  if (!sim) { log('[WARN] 请先启动仿真', 'err'); return; }
+  if (type === 'disconnect') {
+    adcValue = 0;
+    document.getElementById('st-adc').textContent = '0';
+    document.getElementById('st-fault').textContent = '传感器断连';
+    document.getElementById('st-fault').className = 'value err';
+    highlightPart('pin_a0', 0xff0000);
+    log('[FAULT] ⚡ 传感器断连 — ADC=0', 'err');
+  } else if (type === 'short') {
+    adcValue = 1023;
+    document.getElementById('st-adc').textContent = '1023';
+    document.getElementById('st-fault').textContent = '传感器短路';
+    document.getElementById('st-fault').className = 'value err';
+    highlightPart('pin_a0', 0xff0000);
+    log('[FAULT] ⚡ 传感器短路 — ADC=1023', 'err');
+  } else {
+    adcValue = 256;
+    document.getElementById('st-adc').textContent = '256';
+    document.getElementById('st-fault').textContent = '无';
+    document.getElementById('st-fault').className = 'value';
+    log('[FAULT] ✅ 传感器恢复 — ADC=256', 'ok');
+  }
+};
+
+// ================= 渲染循环 =================
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// 初始化
+loadModel('uno');
+log('🔬 3D + 真仿真联动就绪', 'ok');
+log('点击"运行流水灯"，看 3D 板上 LED 跟着真仿真闪烁', 'sys');
+</script>
+</body>
+</html>

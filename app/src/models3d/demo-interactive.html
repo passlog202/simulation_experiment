@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D 模型交互演示 · 智眸实验台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; color: #58a6ff; }
+  header .badge { font-size: 11px; background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; padding: 2px 10px; border-radius: 10px; }
+  .toolbar { display: flex; gap: 8px; }
+  .toolbar button { background: #1f6feb; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .toolbar button:hover { background: #388bfd; }
+  .toolbar button.active { outline: 2px solid #f0b429; }
+  .toolbar button.warn { background: #9e6a03; }
+  .toolbar button.danger { background: #da3633; }
+  .main { flex: 1; display: flex; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; }
+  #canvas-wrap canvas { display: block; width: 100%; height: 100%; }
+  #tooltip { position: absolute; background: rgba(0,0,0,.85); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; pointer-events: none; display: none; z-index: 10; border: 1px solid #30363d; }
+  .sidebar { width: 320px; background: #161b22; border-left: 1px solid #30363d; padding: 16px; overflow-y: auto; }
+  .sidebar h2 { font-size: 14px; color: #58a6ff; margin-bottom: 12px; }
+  .sidebar .info-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .sidebar .info-box h3 { font-size: 14px; margin-bottom: 6px; }
+  .sidebar .info-box p { font-size: 12px; color: #8b949e; line-height: 1.7; }
+  .sidebar .info-box .placeholder { color: #484f58; font-style: italic; }
+  .part-list { list-style: none; }
+  .part-list li { padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-bottom: 4px; background: #21262d; }
+  .part-list li:hover { background: #30363d; }
+  .part-list li.active { background: #1f6feb; color: #fff; }
+  .part-list li .desc { font-size: 11px; color: #8b949e; }
+  .part-list li.active .desc { color: #c9d1d9; }
+  .hint { position: absolute; bottom: 12px; left: 12px; font-size: 12px; color: #8b949e; background: rgba(0,0,0,.6); padding: 6px 12px; border-radius: 6px; }
+  .status { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .status span { font-size: 11px; background: #21262d; padding: 3px 10px; border-radius: 10px; }
+  .status .on { color: #3fb950; }
+  .status .off { color: #8b949e; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🧊 3D 模型交互演示</h1>
+  <span class="badge">可点击 · 可旋转 · 可同步仿真</span>
+  <div class="toolbar" style="margin-left:auto;">
+    <button id="btn-uno" class="active" onclick="switchModel('uno')">Arduino Uno</button>
+    <button id="btn-pico" onclick="switchModel('pico')">树莓派 Pico</button>
+    <button onclick="toggleAutoRotate()">🔄 自动旋转</button>
+    <button class="warn" onclick="simulateGPIO()">💡 模拟 D13 点亮</button>
+    <button class="danger" onclick="simulateFault()">⚡ 模拟故障</button>
+  </div>
+</header>
+
+<div class="main">
+  <div id="canvas-wrap">
+    <div id="tooltip"></div>
+    <div class="hint">🖱️ 左键拖动旋转 · 滚轮缩放 · 右键拖动平移 · 点击部件查看详情 · 悬停高亮</div>
+  </div>
+
+  <div class="sidebar">
+    <h2>📋 部件信息</h2>
+    <div class="info-box" id="part-info">
+      <h3>👆 点击 3D 模型上的任意部件</h3>
+      <p class="placeholder">会显示该部件的名称、功能说明和教学知识点</p>
+    </div>
+
+    <h2>🔌 实时状态（模拟）</h2>
+    <div class="status" id="gpio-status">
+      <span>D13: <b class="off" id="st-d13">LOW</b></span>
+      <span>ADC A0: <b id="st-adc">256</b></span>
+      <span>故障: <b id="st-fault">无</b></span>
+    </div>
+
+    <h2>🧩 部件列表</h2>
+    <ul class="part-list" id="part-list"></ul>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "../node_modules/three/build/three.module.js",
+    "three/addons/": "../node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ============ 场景 ============
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+
+const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 0.1, 100);
+camera.position.set(6, 5, 8);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+wrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+
+// 灯光
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(5, 10, 5);
+dir.castShadow = true;
+scene.add(dir);
+const point = new THREE.PointLight(0x58a6ff, 0.5, 20);
+point.position.set(-5, 5, -5);
+scene.add(point);
+
+// 地面网格
+const grid = new THREE.GridHelper(20, 20, 0x30363d, 0x21262d);
+grid.position.y = -0.5;
+scene.add(grid);
+
+// ============ 模型构建 ============
+let currentGroup = null;
+let clickableMeshes = [];
+let partInfo = new Map(); // mesh -> {id, name, desc}
+let ledMeshes = new Map();
+let selectedMesh = null;
+let autoRotate = false;
+
+function box(w, h, d, color, x, y, z, metal = 0.2) {
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: metal })
+  );
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+function cylinder(r, h, color, x, y, z) {
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r, h, 24),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.6 })
+  );
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+function reg(mesh, id, name, desc) {
+  mesh.userData.partId = id;
+  mesh.userData.partName = name;
+  mesh.userData.partDesc = desc;
+  clickableMeshes.push(mesh);
+  partInfo.set(mesh, { id, name, desc });
+}
+
+function buildUno() {
+  const g = new THREE.Group();
+  // PCB
+  const pcb = box(6.86, 0.16, 5.34, 0x006644, 0, 0, 0);
+  reg(pcb, 'pcb', 'PCB 印刷电路板', '绿色电路板，所有元器件都焊接在上面。铜箔走线连接各个芯片和接口。');
+  g.add(pcb);
+  // ATmega328P
+  const chip = box(1.4, 0.3, 0.6, 0x1a1a1a, -0.3, 0.23, 0);
+  reg(chip, 'atmega328p', 'ATmega328P 主控芯片', 'AVR 8位单片机，16MHz主频，32KB Flash。你写的代码就跑在这里，是整个板子的"大脑"。');
+  g.add(chip);
+  // USB
+  const usb = box(1.2, 0.8, 1.3, 0xaaaaaa, -2.5, 0.4, -1.8, 0.8);
+  reg(usb, 'usb', 'USB-B 接口', '连接电脑：下载程序 + 串口通信 + 供电。三合一。');
+  g.add(usb);
+  // 电源插孔
+  const pwr = cylinder(0.45, 0.6, 0x111111, -2.5, 0.3, 1.8);
+  reg(pwr, 'power_jack', 'DC 电源插孔', '外接 7-12V 直流电源。注意：超过 12V 会烧板！');
+  g.add(pwr);
+  // 晶振
+  const xtal = cylinder(0.2, 0.35, 0xcccccc, -1.2, 0.25, 0.8);
+  reg(xtal, 'crystal', '16MHz 晶振', '给芯片提供时钟信号：每秒 1600 万个节拍，所有指令都按这个节奏执行。');
+  g.add(xtal);
+  // 复位按钮
+  const rst = box(0.5, 0.25, 0.5, 0xcc0000, 0.5, 0.2, 1.5);
+  reg(rst, 'reset', '复位按钮', '按下重启单片机，重新执行 setup()。调试时常用。');
+  g.add(rst);
+  // 排针 D0-D13
+  for (let i = 0; i < 14; i++) {
+    const pin = box(0.12, 0.4, 0.12, 0xffd700, 2.5, 0.28, -2.2 + i * 0.35, 0.8);
+    if (i === 13) reg(pin, 'pin_d13', 'D13 引脚', '板载 LED 连接的引脚。Blink 例程就是控制它：HIGH 亮，LOW 灭。');
+    else pin.userData.partId = 'pin_d' + i;
+    g.add(pin);
+  }
+  // 模拟引脚 A0-A5
+  for (let i = 0; i < 6; i++) {
+    const pin = box(0.12, 0.4, 0.12, 0xffd700, 1.0, 0.28, -2.2 + i * 0.35, 0.8);
+    if (i === 0) reg(pin, 'pin_a0', 'A0 模拟引脚', 'ADC 输入：读取传感器模拟信号，0-5V 映射为 0-1023 的数字。');
+    else pin.userData.partId = 'pin_a' + i;
+    g.add(pin);
+  }
+  // LED
+  addLED(g, 'led_on', 'ON 电源指示灯', 0x00ff00, -1.0, 0.15, 2.2, '通电即亮，表示板子有电');
+  addLED(g, 'led_l', 'L LED (D13)', 0xff0000, -0.3, 0.15, 2.2, '接在 D13 引脚，由程序控制');
+  addLED(g, 'led_tx', 'TX 发送指示', 0xffff00, 0.4, 0.15, 2.2, '串口发送数据时闪烁');
+  addLED(g, 'led_rx', 'RX 接收指示', 0xffff00, 1.1, 0.15, 2.2, '串口接收数据时闪烁');
+  // ON LED 默认亮
+  setLED('led_on', true);
+  return g;
+}
+
+function buildPico() {
+  const g = new THREE.Group();
+  const pcb = box(5.1, 0.12, 2.1, 0x006644, 0, 0, 0);
+  reg(pcb, 'pcb', 'PCB 印刷电路板', 'Pico 的绿色电路板，比 Uno 小一半。');
+  g.add(pcb);
+  const chip = box(0.7, 0.15, 0.7, 0x1a1a1a, 0, 0.12, 0);
+  reg(chip, 'rp2040', 'RP2040 主控芯片', '双核 ARM Cortex-M0+，133MHz，比 Uno 快 8 倍。树莓派自研芯片。');
+  g.add(chip);
+  const usb = box(0.9, 0.35, 0.7, 0x888888, -2.3, 0.15, 0, 0.8);
+  reg(usb, 'usb_c', 'USB-C 接口', '下载程序 + 串口 + 供电。正反都能插。');
+  g.add(usb);
+  const flash = box(0.5, 0.12, 0.5, 0x222222, 1.2, 0.1, 0.5);
+  reg(flash, 'flash', 'Flash 存储芯片', '2MB，存程序和 MicroPython 解释器。');
+  g.add(flash);
+  const boot = box(0.3, 0.15, 0.3, 0xffffff, 1.5, 0.12, -0.5);
+  reg(boot, 'bootsel', 'BOOTSEL 按钮', '按住接 USB 进入烧录模式，Pico 会变成 U 盘。');
+  g.add(boot);
+  for (let i = 0; i < 20; i++) {
+    g.add(box(0.08, 0.3, 0.08, 0xffd700, -1.8 + i * 0.2, 0.2, -1.0, 0.8));
+    g.add(box(0.08, 0.3, 0.08, 0xffd700, -1.8 + i * 0.2, 0.2, 1.0, 0.8));
+  }
+  addLED(g, 'led_gp25', '板载 LED (GP25)', 0x00ff00, 0.8, 0.15, 0.5, '接在 GP25 引脚');
+  return g;
+}
+
+function addLED(g, id, name, color, x, y, z, desc) {
+  const led = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 16, 16),
+    new THREE.MeshStandardMaterial({ color: 0x333333, emissive: color, emissiveIntensity: 0 })
+  );
+  led.position.set(x, y, z);
+  led.castShadow = true;
+  reg(led, id, name, desc);
+  g.add(led);
+  ledMeshes.set(id, led);
+}
+function setLED(id, on) {
+  const led = ledMeshes.get(id);
+  if (led) led.material.emissiveIntensity = on ? 1.2 : 0;
+}
+
+// ============ 模型切换 ============
+function loadModel(boardId) {
+  if (currentGroup) {
+    scene.remove(currentGroup);
+    currentGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+  }
+  clickableMeshes = []; partInfo.clear(); ledMeshes.clear();
+  currentGroup = boardId === 'uno' ? buildUno() : buildPico();
+  scene.add(currentGroup);
+  document.getElementById('btn-uno').classList.toggle('active', boardId === 'uno');
+  document.getElementById('btn-pico').classList.toggle('active', boardId === 'pico');
+  renderPartList();
+  clearSelection();
+}
+
+window.switchModel = loadModel;
+
+// ============ 交互：点击 + 悬停 ============
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+
+function pick(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(clickableMeshes, false);
+  return hits.length ? hits[0].object : null;
+}
+
+renderer.domElement.addEventListener('click', (e) => {
+  const obj = pick(e);
+  if (obj) selectPart(obj);
+});
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  const obj = pick(e);
+  if (obj) {
+    const info = partInfo.get(obj);
+    tooltip.textContent = info ? info.name : '';
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY + 12) + 'px';
+    renderer.domElement.style.cursor = 'pointer';
+    // 悬停高亮
+    if (obj !== selectedMesh) {
+      obj.material.emissive = new THREE.Color(0x58a6ff);
+      obj.material.emissiveIntensity = 0.3;
+    }
+  } else {
+    tooltip.style.display = 'none';
+    renderer.domElement.style.cursor = 'default';
+    // 清除悬停高亮（非选中）
+    clickableMeshes.forEach(m => {
+      if (m !== selectedMesh && !ledMeshes.has(m.userData.partId)) {
+        m.material.emissiveIntensity = 0;
+      }
+    });
+  }
+});
+
+function selectPart(obj) {
+  // 清除旧选中
+  if (selectedMesh && !ledMeshes.has(selectedMesh.userData.partId)) {
+    selectedMesh.material.emissiveIntensity = 0;
+  }
+  selectedMesh = obj;
+  obj.material.emissive = new THREE.Color(0xf0b429);
+  obj.material.emissiveIntensity = 0.5;
+
+  const info = partInfo.get(obj);
+  if (info) {
+    document.getElementById('part-info').innerHTML =
+      `<h3>📦 ${info.name}</h3><p>${info.desc}</p>`;
+    document.querySelectorAll('.part-list li').forEach(li => {
+      li.classList.toggle('active', li.dataset.partId === info.id);
+    });
+  }
+}
+
+function clearSelection() {
+  selectedMesh = null;
+  document.getElementById('part-info').innerHTML =
+    '<h3>👆 点击 3D 模型上的任意部件</h3><p class="placeholder">会显示该部件的名称、功能说明和教学知识点</p>';
+}
+
+function renderPartList() {
+  const ul = document.getElementById('part-list');
+  const seen = new Set();
+  ul.innerHTML = '';
+  for (const [mesh, info] of partInfo) {
+    if (seen.has(info.id)) continue;
+    seen.add(info.id);
+    const li = document.createElement('li');
+    li.dataset.partId = info.id;
+    li.innerHTML = `${info.name}<div class="desc">${info.desc.slice(0, 30)}...</div>`;
+    li.onclick = () => selectPart(mesh);
+    ul.appendChild(li);
+  }
+}
+
+// ============ 仿真联动演示 ============
+let d13On = false;
+window.simulateGPIO = () => {
+  d13On = !d13On;
+  setLED('led_l', d13On);
+  const el = document.getElementById('st-d13');
+  el.textContent = d13On ? 'HIGH' : 'LOW';
+  el.className = d13On ? 'on' : 'off';
+  // 同时高亮 D13 引脚
+  const d13pin = clickableMeshes.find(m => m.userData.partId === 'pin_d13');
+  if (d13pin) selectPart(d13pin);
+};
+
+window.simulateFault = () => {
+  const a0 = clickableMeshes.find(m => m.userData.partId === 'pin_a0');
+  if (a0) {
+    a0.material.emissive = new THREE.Color(0xff0000);
+    a0.material.emissiveIntensity = 0.8;
+    selectPart(a0);
+    document.getElementById('st-fault').textContent = 'A0 传感器断连';
+    document.getElementById('st-fault').style.color = '#f85149';
+    document.getElementById('st-adc').textContent = '0';
+    setTimeout(() => { a0.material.emissiveIntensity = 0; }, 3000);
+  }
+};
+
+window.toggleAutoRotate = () => {
+  autoRotate = !autoRotate;
+  controls.autoRotate = autoRotate;
+};
+
+// ============ 渲染循环 ============
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// 初始化
+loadModel('uno');
+</script>
+</body>
+</html>

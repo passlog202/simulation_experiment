@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智眸实验台 · 边缘AI视觉开发板虚拟仿真实验教学系统</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #c9d1d9; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+  }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 18px; color: var(--accent); }
+  header .ver { font-size: 11px; background: #21262d; padding: 2px 8px; border-radius: 10px; color: #8b949e; }
+  nav { display: flex; gap: 4px; margin-left: 24px; }
+  nav button { background: transparent; color: var(--text); border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  nav button:hover { background: #21262d; }
+  nav button.active { background: #1f6feb; color: #fff; }
+  main { flex: 1; overflow: hidden; position: relative; }
+  .tab { display: none; height: 100%; overflow-y: auto; padding: 24px; }
+  .tab.active { display: block; }
+  .hero { text-align: center; padding: 60px 20px; }
+  .hero h2 { font-size: 32px; margin-bottom: 16px; color: var(--accent); }
+  .hero p { font-size: 15px; color: #8b949e; max-width: 640px; margin: 0 auto 32px; line-height: 1.8; }
+  .cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 280px; cursor: pointer; transition: transform .15s; }
+  .card:hover { transform: translateY(-4px); border-color: var(--accent); }
+  .card .icon { font-size: 36px; margin-bottom: 12px; }
+  .card h3 { font-size: 16px; margin-bottom: 8px; }
+  .card p { font-size: 13px; color: #8b949e; line-height: 1.6; }
+  .card .tag { display: inline-block; font-size: 11px; background: #1f6feb33; color: var(--accent); padding: 2px 8px; border-radius: 10px; margin-top: 8px; }
+  footer { background: var(--panel); border-top: 1px solid var(--border); padding: 8px 24px; font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; }
+  iframe.tab-frame { width: 100%; height: 100%; border: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔬 智眸实验台</h1>
+  <span class="ver">v1.0 离线版</span>
+  <nav>
+    <button class="active" onclick="showTab('home')">首页</button>
+    <button onclick="showTab('sim')">🔌 嵌入式仿真</button>
+    <button onclick="showTab('lab3d')">🧊 3D 实验台</button>
+    <button onclick="showTab('about')">ℹ️ 关于</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 首页 -->
+  <div class="tab active" id="tab-home">
+    <div class="hero">
+      <h2>边缘 AI 视觉开发板<br>虚拟仿真实验教学系统</h2>
+      <p>无需购买硬件，在电脑上完成嵌入式开发板实验。<br>真实 CPU 仿真核运行真实固件，串口输出、故障注入均为实时仿真结果。</p>
+      <div class="cards">
+        <div class="card" onclick="showTab('sim')">
+          <div class="icon">🔌</div>
+          <h3>嵌入式仿真</h3>
+          <p>Arduino Uno / 树莓派 Pico 真实仿真核，串口终端、故障注入</p>
+          <span class="tag">已可用</span>
+        </div>
+        <div class="card" onclick="window.open('models3d/integrated-3d-sim.html','_blank')">
+          <div class="icon">🧊</div>
+          <h3>3D 实验台</h3>
+          <p>开发板 3D 模型 + 真仿真联动，点部件看详情，LED 跟仿真同步</p>
+          <span class="tag">已可用</span>
+        </div>
+        <div class="card">
+          <div class="icon">🤖</div>
+          <h3>AI 助教</h3>
+          <p>实验引导、实时答疑、实验报告点评</p>
+          <span class="tag">开发中</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 嵌入式仿真 -->
+  <div class="tab" id="tab-sim" style="padding:0;">
+    <iframe class="tab-frame" src="simulator.html"></iframe>
+  </div>
+
+  <!-- 3D 实验台 -->
+  <div class="tab" id="tab-lab3d">
+    <div class="hero">
+      <h2>🧊 3D 实验台</h2>
+      <p>电脑主板 / 内存条 / SSD / 显卡 / AI 开发板 3D 可点击拆解<br>正在开发中，敬请期待</p>
+    </div>
+  </div>
+
+  <!-- 关于 -->
+  <div class="tab" id="tab-about">
+    <div class="hero" style="text-align:left; max-width:720px; margin:0 auto;">
+      <h2>ℹ️ 关于本系统</h2>
+      <div style="text-align:left; line-height:2; font-size:14px;">
+        <p><b>名称：</b>智眸实验台 · 边缘AI视觉开发板虚拟仿真实验教学系统</p>
+        <p><b>版本：</b>v1.0 离线版</p>
+        <p><b>技术栈：</b>Electron + Three.js + avr8js + rp2040js</p>
+        <p><b>仿真核：</b></p>
+        <ul style="margin-left:24px;">
+          <li>Arduino Uno — avr8js (AVR 8-bit @16MHz)</li>
+          <li>树莓派 Pico — rp2040js (ARM Cortex-M0+ @125MHz)</li>
+        </ul>
+        <p><b>开源致谢：</b></p>
+        <ul style="margin-left:24px;">
+          <li>avr8js — Wokwi (MIT)</li>
+          <li>rp2040js — Wokwi (MIT)</li>
+          <li>pc-anatomy — Yoosseph (MIT)</li>
+        </ul>
+        <p style="margin-top:16px; color:#8b949e; font-size:12px;">本系统为教学演示用途。固件为演示程序，仿真结果仅供学习参考。</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>智眸实验台 v1.0 · 离线版</span>
+  <span>2026 第十四届全国大学生数字媒体科技作品及创意竞赛参赛作品</span>
+</footer>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>
